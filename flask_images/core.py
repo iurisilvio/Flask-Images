@@ -1,6 +1,5 @@
 from __future__ import division
 
-from cStringIO import StringIO
 from subprocess import call
 from urllib import urlencode
 from urllib2 import urlopen
@@ -10,16 +9,15 @@ import datetime
 import errno
 import hashlib
 import logging
-import math
 import os
 import re
 import struct
-import sys
 
 from PIL import Image as image
 from flask import request, current_app, send_file, abort
 from itsdangerous import Signer, constant_time_compare
 
+from .optimizer import Optimizer
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +43,7 @@ class Images(object):
     MODES = (MODE_FIT, MODE_CROP, MODE_PAD, MODE_RESHAPE)
     
     def __init__(self, app=None):
+        self.optimizer = Optimizer()
         if app is not None:
             self.init_app(app)
 
@@ -58,6 +57,7 @@ class Images(object):
         app.config.setdefault('IMAGES_PATH', ['static'])
         app.config.setdefault('IMAGES_CACHE', '/tmp/flask-images')
         app.config.setdefault('IMAGES_MAX_AGE', 3600)
+        app.config.setdefault('IMAGES_OPTIMIZE', False)
 
         app.add_url_rule(app.config['IMAGES_URL'] + '/<path:path>', app.config['IMAGES_NAME'], self.handle_request)
         app.context_processor(self._context_processor)
@@ -252,10 +252,13 @@ class Images(object):
             img = self.resize(img, width=width, height=height, mode=mode, background=background)
             
             makedirs(cache_dir)
-            cache_file = open(cache_path, 'wb')
-            img.save(cache_file, format, quality=quality)
-            cache_file.close()
-        
+
+            with open(cache_path, 'wb') as cache_file:
+                img.save(cache_file, format, quality=quality)
+
+            if current_app.config['IMAGES_OPTIMIZE']:
+                self.optimizer(cache_path)
+
         return send_file(cache_path,
             mimetype='image/%s' % format,
             cache_timeout=31536000 if has_version else current_app.config['IMAGES_MAX_AGE'],
